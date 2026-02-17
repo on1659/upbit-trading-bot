@@ -1,0 +1,15 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# 환경변수
+.env
+
+# 로그
+*.log
+
+# macOS
+.DS_Store
