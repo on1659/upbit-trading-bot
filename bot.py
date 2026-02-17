@@ -1,12 +1,15 @@
 """
-업비트 자동매매 봇
+업비트 자동매매 봇 v2.0
+- 10개 전략 선택 가능
+- 실시간 매매
+- 손절/익절 자동화
 """
 import time
 import pyupbit
 import pandas as pd
 from datetime import datetime
 import config
-from strategy import Strategy, SimpleRSIStrategy
+from strategies import STRATEGIES, STRATEGY_CONFIGS
 
 
 class TradingBot:
@@ -30,8 +33,20 @@ class TradingBot:
             print("⚠️ API 키가 없습니다. 읽기 전용 모드로 실행됩니다.")
         
         # 전략 설정
-        self.strategy = Strategy(config.STRATEGY_PARAMS)
-        # self.strategy = SimpleRSIStrategy(config.STRATEGY_PARAMS)  # 단순 전략
+        strategy_num = config.SELECTED_STRATEGY
+        strategy_class = STRATEGIES.get(strategy_num)
+        
+        if not strategy_class:
+            print(f"❌ 전략 #{strategy_num}을 찾을 수 없습니다. 전략 #1로 대체합니다.")
+            strategy_num = 1
+            strategy_class = STRATEGIES[1]
+        
+        self.strategy = strategy_class(config.STRATEGY_PARAMS)
+        self.strategy_config = STRATEGY_CONFIGS[strategy_num]
+        
+        print(f"🎯 전략: #{strategy_num} {self.strategy_config['name']}")
+        print(f"   {self.strategy_config['description']}")
+        print(f"   손절: {config.STOP_LOSS*100:.1f}% / 익절: {config.TAKE_PROFIT*100:.1f}%")
         
         # 매매 상태
         self.position = None  # 'long', 'short', None
@@ -221,7 +236,26 @@ class TradingBot:
         
         return False
     
-    def run(self, ticker=None, interval="minute60", sleep_sec=60):
+    def send_telegram(self, message):
+        """
+        텔레그램 알림 (선택사항)
+        """
+        if not config.TELEGRAM_TOKEN or not config.TELEGRAM_CHAT_ID:
+            return
+        
+        try:
+            import requests
+            url = f"https://api.telegram.org/bot{config.TELEGRAM_TOKEN}/sendMessage"
+            data = {
+                "chat_id": config.TELEGRAM_CHAT_ID,
+                "text": message,
+                "parse_mode": "HTML"
+            }
+            requests.post(url, data=data, timeout=5)
+        except:
+            pass  # 알림 실패해도 봇은 계속
+    
+    def run(self, ticker=None, interval=None, sleep_sec=60):
         """
         봇 실행
         
@@ -231,12 +265,28 @@ class TradingBot:
             sleep_sec: 대기 시간 (초)
         """
         ticker = ticker or config.TARGET_COIN
+        interval = interval or config.INTERVAL
         
+        print()
+        print("=" * 60)
         print(f"🤖 자동매매 봇 시작")
+        print("=" * 60)
         print(f"   티커: {ticker}")
         print(f"   주기: {interval}")
         print(f"   모드: {config.TRADING_MODE}")
-        print("-" * 50)
+        print(f"   전략: #{config.SELECTED_STRATEGY} {self.strategy_config['name']}")
+        print("=" * 60)
+        
+        # 시작 알림
+        start_msg = f"""
+🤖 <b>업비트 봇 시작</b>
+
+전략: #{config.SELECTED_STRATEGY} {self.strategy_config['name']}
+티커: {ticker}
+모드: {config.TRADING_MODE}
+손절: {config.STOP_LOSS*100:.1f}% / 익절: {config.TAKE_PROFIT*100:.1f}%
+"""
+        self.send_telegram(start_msg.strip())
         
         while True:
             try:
@@ -258,24 +308,71 @@ class TradingBot:
                 current = df.iloc[-1]
                 current_price = self.get_current_price(ticker)
                 
+                # 포지션 정보
+                pos_info = ""
+                if self.position == 'long':
+                    profit_ratio = (current_price - self.entry_price) / self.entry_price * 100
+                    holding_time = (datetime.now() - self.entry_time).total_seconds() / 3600
+                    pos_info = f" | 포지션: +{profit_ratio:.2f}% ({holding_time:.1f}h)"
+                
                 print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]")
-                print(f"현재가: {current_price:,.0f}원")
-                print(f"RSI: {current['rsi']:.2f}")
-                print(f"MACD: {current['macd']:.2f}")
-                print(f"신호: {signal}")
+                print(f"현재가: {current_price:,.0f}원 | RSI: {current['rsi']:.1f} | 신호: {signal}{pos_info}")
                 
                 # 손절/익절 체크
                 if self.position == 'long':
                     if self.check_stop_loss(ticker):
-                        self.sell(ticker)
+                        result = self.sell(ticker)
+                        if result or config.TRADING_MODE == 'test':
+                            profit_ratio = (current_price - self.entry_price) / self.entry_price * 100
+                            msg = f"""
+🔻 <b>손절</b>
+
+티커: {ticker}
+진입가: {self.entry_price:,.0f}원
+현재가: {current_price:,.0f}원
+손실: {profit_ratio:.2f}%
+"""
+                            self.send_telegram(msg.strip())
                     elif self.check_take_profit(ticker):
-                        self.sell(ticker)
+                        result = self.sell(ticker)
+                        if result or config.TRADING_MODE == 'test':
+                            profit_ratio = (current_price - self.entry_price) / self.entry_price * 100
+                            msg = f"""
+🔺 <b>익절</b>
+
+티커: {ticker}
+진입가: {self.entry_price:,.0f}원
+현재가: {current_price:,.0f}원
+수익: {profit_ratio:.2f}%
+"""
+                            self.send_telegram(msg.strip())
                 
                 # 매매 실행
                 if signal == 'buy' and self.position is None:
-                    self.buy(ticker, ratio=config.INVEST_RATIO)
+                    result = self.buy(ticker, ratio=config.INVEST_RATIO)
+                    if result or config.TRADING_MODE == 'test':
+                        msg = f"""
+📈 <b>매수</b>
+
+티커: {ticker}
+가격: {current_price:,.0f}원
+RSI: {current['rsi']:.1f}
+전략: {self.strategy_config['name']}
+"""
+                        self.send_telegram(msg.strip())
                 elif signal == 'sell' and self.position == 'long':
-                    self.sell(ticker)
+                    result = self.sell(ticker)
+                    if result or config.TRADING_MODE == 'test':
+                        profit_ratio = (current_price - self.entry_price) / self.entry_price * 100
+                        msg = f"""
+📉 <b>매도</b>
+
+티커: {ticker}
+진입가: {self.entry_price:,.0f}원
+현재가: {current_price:,.0f}원
+수익: {profit_ratio:+.2f}%
+"""
+                        self.send_telegram(msg.strip())
                 
                 # 대기
                 time.sleep(sleep_sec)
@@ -289,11 +386,37 @@ class TradingBot:
 
 
 if __name__ == "__main__":
+    print()
+    print("=" * 60)
+    print("🤖 업비트 자동매매 봇 v2.0")
+    print("=" * 60)
+    
     bot = TradingBot()
     
     # 잔고 확인
-    krw = bot.get_balance("KRW")
-    print(f"💰 KRW 잔고: {krw:,.0f}원")
+    if bot.upbit:
+        krw = bot.get_balance("KRW")
+        btc = bot.get_balance("BTC")
+        print(f"\n💰 잔고")
+        print(f"   KRW: {krw:,.0f}원")
+        if btc > 0:
+            print(f"   BTC: {btc:.8f}")
+    
+    # 경고
+    if config.TRADING_MODE == 'real':
+        print()
+        print("⚠️" * 20)
+        print("실전 모드입니다! 실제 돈이 거래됩니다!")
+        print("⚠️" * 20)
+        print()
+        response = input("계속하시겠습니까? (yes/no): ")
+        if response.lower() != 'yes':
+            print("봇을 종료합니다.")
+            exit()
     
     # 봇 실행
-    bot.run()
+    try:
+        bot.run()
+    except KeyboardInterrupt:
+        print("\n\n⛔ 봇 종료")
+        bot.send_telegram("⛔ 봇이 수동으로 종료되었습니다.")
