@@ -6,7 +6,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from datetime import datetime
 import config
-from strategy import Strategy, SimpleRSIStrategy
+from strategies import STRATEGIES, STRATEGY_CONFIGS
 
 
 class Backtester:
@@ -70,7 +70,7 @@ class Backtester:
         
         # 백테스팅
         for i in range(len(df)):
-            if i < 60:  # 최소 데이터 필요
+            if i < 30:  # 최소 데이터 필요 (분봉은 짧게)
                 continue
             
             current_df = df.iloc[:i+1]
@@ -124,8 +124,8 @@ class Backtester:
             if self.position is not None:
                 current_profit_ratio = (current_price - self.entry_price) / self.entry_price
                 
-                # 손절
-                if current_profit_ratio <= -config.STOP_LOSS:
+                # 손절 (손절 설정이 있을 때만)
+                if config.STOP_LOSS > 0 and current_profit_ratio <= -config.STOP_LOSS:
                     sell_amount = self.position * current_price
                     profit = sell_amount - (self.position * self.entry_price)
                     
@@ -216,8 +216,16 @@ class Backtester:
 
 if __name__ == "__main__":
     # 전략 선택
-    strategy = Strategy(config.STRATEGY_PARAMS)
-    # strategy = SimpleRSIStrategy(config.STRATEGY_PARAMS)
+    strategy_num = config.SELECTED_STRATEGY
+    strategy_class = STRATEGIES[strategy_num]
+    strategy = strategy_class(config.STRATEGY_PARAMS)
+    strategy_config = STRATEGY_CONFIGS[strategy_num]
+    
+    print(f"🎯 전략: #{strategy_num} {strategy_config['name']}")
+    print(f"   설명: {strategy_config['description']}")
+    print(f"   손절: {config.STOP_LOSS*100:.1f}% / 익절: {config.TAKE_PROFIT*100:.1f}%")
+    print(f"   시간봉: {config.INTERVAL}")
+    print()
     
     # 백테스터 생성
     backtester = Backtester(strategy, initial_balance=1000000)
@@ -225,7 +233,7 @@ if __name__ == "__main__":
     # 백테스팅 실행
     result = backtester.run(
         ticker="KRW-BTC",
-        start_date="20240101",
+        start_date="20251101",
         end_date="20260217",
-        interval="day"
+        interval=config.INTERVAL
     )

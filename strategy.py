@@ -7,11 +7,12 @@ import ta
 
 class Strategy:
     """
-    기술적 지표 기반 매매 전략
+    기본 전략 클래스
     """
     
     def __init__(self, params=None):
         self.params = params or {}
+        self.name = "Base Strategy"
         
     def calculate_indicators(self, df):
         """
@@ -79,7 +80,7 @@ class Strategy:
         previous = df.iloc[-2]
         
         # RSI 과매도/과매수
-        rsi_oversold = self.params.get('rsi_oversold', 28)  # 밸런스
+        rsi_oversold = self.params.get('rsi_oversold', 45)  # 최근 데이터용 완화
         rsi_overbought = self.params.get('rsi_overbought', 70)
         
         # 매수 신호
@@ -93,14 +94,14 @@ class Strategy:
         if current['close'] < current['ma_20'] and current['macd'] > previous['macd']:
             buy_signals.append('price_below_ma20_macd_rising')
         
-        # 3. 볼린저 밴드 하단 근처 (5% 이내)
-        if current['close'] < current['bb_lower'] * 1.05:
+        # 3. 볼린저 밴드 하단 근처 (10% 이내로 완화)
+        if current['close'] < current['bb_lower'] * 1.10:
             buy_signals.append('near_bb_lower')
         
         # 4. RSI 다이버전스 (가격 하락 but RSI 상승 → 반등 신호)
         if (current['close'] < previous['close'] and 
             current['rsi'] > previous['rsi'] and 
-            current['rsi'] < rsi_oversold + 10):  # RSI 38 이하에서만
+            current['rsi'] < rsi_oversold + 15):  # RSI 60 이하로 완화
             buy_signals.append('rsi_divergence')
         
         # 매도 신호
